@@ -6,9 +6,12 @@ using CSV
 function get_pdf(sample, mu, sigma)
     try
         distribution = MvNormal(mu, sigma)
-        return pdf(distribution, sample)
+        result = pdf(distribution, sample)
+        if isnan(result)
+            return 0
+        end
+        return result
     catch
-        # println(sigma)
         return 0
     end
 end
@@ -20,7 +23,7 @@ function get_log_likelihood(data, k, mu, sigma, gamma)
         for j=1:length(k)
             cur += gamma[j,i] * get_pdf(data[i], mu[j], sigma[j])
         end
-        res += log(cur)
+        res += log(max(0.001, cur))
     end
     return res
 end
@@ -106,10 +109,22 @@ function init(k)
 	return k_init, mu_init, sigma_init
 end
 
-function gmm(data,k)
+mutable struct GMMResult
+    likelihood::Float64
+    bic::Float64
+    tree_num
+    k
+    mu
+    sigma
+    gamma
+end
+
+function gmm(data,k,step=30)
     k_init, mu_init, sigma_init = init(k)
-    k_res, mu_res, sigma_res, gamma, likelihood_record = em(data, k_init, mu_init, sigma_init, 30)
-    return likelihood_record[30]
+    k_res, mu_res, sigma_res, gamma, likelihood_record = em(data, k_init, mu_init, sigma_init, step)
+    likelihood = likelihood_record[step]
+    bic = -2*likelihood+log(size(data)[1])*k
+    return GMMResult(likelihood, bic, k, k_res, mu_res, sigma_res, gamma)
 end
 
 data = []
@@ -118,10 +133,39 @@ for (i, row) in enumerate(csvFile)
     push!(data, [row.Column1, row.Column2])
 end
 
-for k=1:30
-    likelihood = gmm(data, k)
-    println(k, " ", likelihood)
+
+results = []
+for k=10:30
+    start = time_ns()
+    result = gmm(data, k)
+    push!(results, result)
+    println(k, " ", result.likelihood, " ", result.bic, " ", (time_ns() - start) / 1e9)
 end
+
+# min_result = results[1]
+# for result in results
+#     if result.bic < min_result.bic
+#         # print(min_result)
+#         # print(result)
+#         min_result = result
+#     end
+# end
+
+## ACORDING TO OUR TEST, K=25-28, SO WE SELECT K=27 HERE
+
+k = 27
+start = time_ns()
+test_result = gmm(data, k)
+println(k, " ", test_result.likelihood, " ", test_result.bic, " ", (time_ns() - start) / 1e9)
+
+open("trees.csv", "w") do f
+    write(f, ",X,Y\n")
+    for (i, mu) in enumerate(test_result.mu)
+        write(f, "$(i),$(mu[1]), $(mu[2])\n")
+    end
+end
+println("Results written to trees.csv.")
+
 
 # k_init, mu_init, sigma_init = init(10)
 # k_res, mu_res, sigma_res, gamma, likelihood_record = em(data, k_init, mu_init, sigma_init, 50)
